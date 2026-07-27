@@ -1,0 +1,23 @@
+# Local machine settings
+.env
+.env.*
+configs/local.env
+
+# Generated data, checkpoints, logs, and model artifacts
+data/*
+outputs/
+logs/
+checkpoints/
+models/
+cache/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.venv-flowcomp/
+.pytest_cache/
+*.egg-info/
+
+# OS/editor files
+.DS_Store
