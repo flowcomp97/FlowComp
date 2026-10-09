@@ -7,10 +7,12 @@ from typing import Dict, List
 
 import _bootstrap  # noqa: F401
 import torch
+from rouge_score import rouge_scorer
 from tqdm.auto import tqdm
 
 from flowcomp import FlowComp, ModelArguments, TrainingArguments
 from flowcomp.paths import output_path
+from flowcomp.truncation import source_token_ids
 
 
 def normalize_text(text: str) -> str:
@@ -46,45 +48,16 @@ def token_f1(prediction: str, answer: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
-def rouge_n_f1(prediction: str, answer: str, n: int) -> float:
-    pred_tokens = normalize_text(prediction).split()
-    answer_tokens = normalize_text(answer).split()
-    if len(pred_tokens) < n or len(answer_tokens) < n:
-        return 0.0
-    pred_ngrams = Counter(tuple(pred_tokens[i : i + n]) for i in range(len(pred_tokens) - n + 1))
-    answer_ngrams = Counter(tuple(answer_tokens[i : i + n]) for i in range(len(answer_tokens) - n + 1))
-    overlap = sum((pred_ngrams & answer_ngrams).values())
-    if overlap == 0:
-        return 0.0
-    precision = overlap / max(sum(pred_ngrams.values()), 1)
-    recall = overlap / max(sum(answer_ngrams.values()), 1)
-    return 2 * precision * recall / (precision + recall)
+ROUGE_SCORER = rouge_scorer.RougeScorer(
+    ["rouge1", "rouge2", "rougeL"],
+    use_stemmer=False,
+)
 
 
-def lcs_length(a: List[str], b: List[str]) -> int:
-    prev = [0] * (len(b) + 1)
-    for token_a in a:
-        curr = [0] * (len(b) + 1)
-        for idx, token_b in enumerate(b, start=1):
-            if token_a == token_b:
-                curr[idx] = prev[idx - 1] + 1
-            else:
-                curr[idx] = max(prev[idx], curr[idx - 1])
-        prev = curr
-    return prev[-1]
-
-
-def rouge_l_f1(prediction: str, answer: str) -> float:
-    pred_tokens = normalize_text(prediction).split()
-    answer_tokens = normalize_text(answer).split()
-    if not pred_tokens or not answer_tokens:
-        return 0.0
-    lcs = lcs_length(pred_tokens, answer_tokens)
-    precision = lcs / len(pred_tokens)
-    recall = lcs / len(answer_tokens)
-    if precision + recall == 0:
-        return 0.0
-    return 2 * precision * recall / (precision + recall)
+def compute_rouge_scores(prediction: str, answer: str) -> Dict[str, float]:
+    """Return F1 scores using rouge-score's standard default tokenization."""
+    scores = ROUGE_SCORER.score(answer, prediction)
+    return {metric: score.fmeasure for metric, score in scores.items()}
 
 
 def clean_prediction(text: str) -> str:
@@ -126,15 +99,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target_model_name_or_path", default="meta-llama/Meta-Llama-3-8B-Instruct")
     parser.add_argument("--target_model_device_map", default="none")
     parser.add_argument("--latent_generator_type", choices=["flow", "one_shot"], default="flow")
-    parser.add_argument("--distribution_loss_type", choices=["wasserstein", "mmd"], default="wasserstein")
+    parser.add_argument(
+        "--distribution_loss_type", choices=["wasserstein", "mmd", "cosine"], default="wasserstein"
+    )
     parser.add_argument("--soft_token_attention", choices=["bidirectional", "causal"], default="bidirectional")
-    parser.add_argument("--num_soft_tokens", type=int, default=64)
+    # Defaults follow the long-document summarization column of Table 8.
+    parser.add_argument("--num_soft_tokens", type=int, default=128)
     parser.add_argument("--latent_dim", type=int, default=1024)
-    parser.add_argument("--sampling_steps", type=int, default=4)
+    parser.add_argument("--sampling_steps", type=int, default=8)
     parser.add_argument("--denoiser_layers", type=int, default=4)
     parser.add_argument("--decoder_layers", type=int, default=2)
     parser.add_argument("--num_attention_heads", type=int, default=8)
     parser.add_argument("--model_max_length", type=int, default=2048)
+    # Appendix F.4: long documents exceeding model_max_length use head+tail
+    # truncation, keeping the first and last portions in equal proportion.
+    parser.add_argument(
+        "--source_truncation",
+        choices=["head", "tail", "head_tail"],
+        default="head_tail",
+        help="Truncation policy for the source document (Appendix F.4: head_tail, 2048 T5 tokens).",
+    )
+    parser.add_argument(
+        "--source_head_tail_ratio",
+        type=float,
+        default=0.5,
+        help="Fraction of the token budget kept from the head under head_tail truncation.",
+    )
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--max_examples", type=int, default=0, help="Evaluate only the first N examples. 0 means all.")
     parser.add_argument("--source_key", default="text")
@@ -142,8 +132,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--answer_key", default="answer")
     parser.add_argument("--task_type", choices=["auto", "summarization", "qa", "multiple_choice"], default="auto")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for FlowComp inference noise.")
-    parser.add_argument("--bf16", action="store_true")
-    parser.add_argument("--use_flash_attention_2", action="store_true")
+    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--use_flash_attention_2", action=argparse.BooleanOptionalAction, default=True
+    )
     return parser
 
 
@@ -173,6 +165,8 @@ def main() -> None:
         output_dir=str(output_path("scratch", "eval_long_document")),
         bf16=args.bf16,
         model_max_length=args.model_max_length,
+        source_truncation=args.source_truncation,
+        source_head_tail_ratio=args.source_head_tail_ratio,
         per_device_eval_batch_size=1,
         report_to=[],
     )
@@ -201,13 +195,17 @@ def main() -> None:
 
     for row in tqdm(rows, desc="eval", unit="ex"):
         task_type = args.task_type if args.task_type != "auto" else row.get("task_type", "qa")
-        encoder = model.source_tokenizer(
+        source_ids = source_token_ids(
+            model.source_tokenizer,
             row[args.source_key],
-            truncation=True,
             max_length=args.model_max_length,
-            padding=False,
-            return_tensors="pt",
-        )
+            mode=args.source_truncation,
+            head_tail_ratio=args.source_head_tail_ratio,
+        )["input_ids"]
+        encoder = {
+            "input_ids": torch.tensor([source_ids], dtype=torch.long),
+            "attention_mask": torch.ones((1, len(source_ids)), dtype=torch.long),
+        }
         prompt_max_length = max(args.model_max_length - args.num_soft_tokens, 1)
         prompt_tokens = model.target_tokenizer(
             row[args.prompt_key],
@@ -242,9 +240,8 @@ def main() -> None:
             "prediction": prediction,
         }
         if task_type == "summarization":
-            sample["rouge1"] = rouge_n_f1(prediction, answer, 1)
-            sample["rouge2"] = rouge_n_f1(prediction, answer, 2)
-            sample["rougeL"] = rouge_l_f1(prediction, answer)
+            rouge_scores = compute_rouge_scores(prediction, answer)
+            sample.update(rouge_scores)
             totals["rouge1"] += sample["rouge1"]
             totals["rouge2"] += sample["rouge2"]
             totals["rougeL"] += sample["rougeL"]

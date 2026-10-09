@@ -270,7 +270,7 @@ def main() -> None:
     ap.add_argument('--target_model_name_or_path', default='meta-llama/Meta-Llama-3-8B-Instruct')
     ap.add_argument('--target_model_device_map', default='none')
     ap.add_argument('--latent_generator_type', choices=['flow', 'one_shot'], default='flow')
-    ap.add_argument('--distribution_loss_type', choices=['wasserstein', 'mmd'], default='wasserstein')
+    ap.add_argument('--distribution_loss_type', choices=['wasserstein', 'mmd', 'cosine'], default='wasserstein')
     ap.add_argument('--soft_token_attention', choices=['bidirectional', 'causal'], default='bidirectional')
     ap.add_argument('--num_soft_tokens', type=int, default=64)
     ap.add_argument('--latent_dim', type=int, default=1024)

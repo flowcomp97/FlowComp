@@ -9,6 +9,8 @@ from typing import Any, Dict, Iterable, List
 import _bootstrap  # noqa: F401
 from datasets import load_dataset
 
+from flowcomp.truncation import truncate_words as _truncate_words
+
 
 def clean_text(text: Any) -> str:
     if text is None:
@@ -25,13 +27,22 @@ def clean_text(text: Any) -> str:
     return text.strip()
 
 
-def truncate_words(text: str, max_words: int) -> str:
-    if max_words <= 0:
+def truncate_words(text: str, max_words: int, mode: str = "head_tail", head_tail_ratio: float = 0.5) -> str:
+    """Word-level cap of Appendix F.4, applied with the head+tail policy."""
+    return _truncate_words(text, max_words, mode, head_tail_ratio)
+
+
+def truncate_for_args(args: argparse.Namespace, text: str) -> str:
+    """Apply the optional word-level cap under the long-document policy.
+
+    Appendix F.4 describes ``max_source_words`` as a coarser, optional control
+    layered on top of the token-level head+tail rule; leaving it at 0 keeps
+    the document intact for the trainer / evaluator to truncate at token
+    granularity.
+    """
+    if args.max_source_words <= 0:
         return text
-    words = text.split()
-    if len(words) <= max_words:
-        return text
-    return " ".join(words[:max_words])
+    return truncate_words(text, args.max_source_words, args.truncation_mode, args.head_tail_ratio)
 
 
 def write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
@@ -77,7 +88,7 @@ def prepare_govreport(args: argparse.Namespace) -> Dict[str, int]:
                     "dataset": "govreport",
                     "split": out_split,
                     "task_type": "summarization",
-                    "text": truncate_words(source, args.max_source_words),
+                    "text": truncate_for_args(args, source),
                     "prompt": "Summarize the government report.\nSummary:",
                     "answer": answer,
                 }
@@ -163,7 +174,7 @@ def prepare_qmsum(args: argparse.Namespace) -> Dict[str, int]:
                             "dataset": "qmsum",
                             "split": out_split,
                             "task_type": "summarization",
-                            "text": truncate_words(source, args.max_source_words),
+                            "text": truncate_for_args(args, source),
                             "prompt": f"Summarize the meeting according to the query.\nQuery: {question}\nSummary:",
                             "answer": answer,
                             "query": question,
@@ -238,7 +249,7 @@ def prepare_musique(args: argparse.Namespace) -> Dict[str, int]:
                     "dataset": f"musique_{args.musique_variant}",
                     "split": out_split,
                     "task_type": "qa",
-                    "text": truncate_words(source, args.max_source_words),
+                    "text": truncate_for_args(args, source),
                     "prompt": f"Answer the multi-hop question using the passages.\nQuestion: {question}\nAnswer:",
                     "answer": answer,
                     "question": question,
@@ -277,7 +288,7 @@ def prepare_quality(args: argparse.Namespace) -> Dict[str, int]:
         path = find_quality_file(raw_dir, raw_split)
         rows = []
         for article_row in read_jsonl(path):
-            article = truncate_words(clean_text(article_row.get("article")), args.max_source_words)
+            article = truncate_for_args(args, clean_text(article_row.get("article")))
             title = clean_text(article_row.get("title"))
             source = f"Title: {title}\n\n{article}" if title else article
             for q_idx, question_row in enumerate(article_row.get("questions") or []):
@@ -344,6 +355,8 @@ def main() -> None:
         "output_dir": args.output_dir,
         "splits": counts,
         "max_source_words": args.max_source_words,
+        "truncation_mode": args.truncation_mode,
+        "head_tail_ratio": args.head_tail_ratio,
     }
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, List
 import _bootstrap  # noqa: F401
 from datasets import Dataset, DatasetDict, load_from_disk
 
+from flowcomp.truncation import truncate_words
+
 
 LONG_DOCUMENT_CONFIGS = {
     "longbench_gov_report": {
@@ -68,15 +70,6 @@ def first_answer(value: Any) -> str:
                 return text
         return ""
     return coerce_text(value)
-
-
-def truncate_words(text: str, max_words: int) -> str:
-    if max_words <= 0:
-        return text
-    words = text.split()
-    if len(words) <= max_words:
-        return text
-    return " ".join(words[:max_words])
 
 
 def read_jsonl_rows(path: Path) -> List[Dict[str, Any]]:
@@ -156,7 +149,12 @@ def convert_row(row: Dict[str, Any], args: argparse.Namespace, task_type: str) -
             source_text = coerce_text(row.get(key))
             if source_text:
                 break
-    source_text = truncate_words(source_text, args.max_source_words)
+    source_text = truncate_words(
+        source_text,
+        args.max_source_words,
+        args.truncation_mode,
+        args.head_tail_ratio,
+    )
 
     answer = first_answer(row.get(args.answer_field))
     if not answer:
@@ -241,6 +239,10 @@ def main() -> None:
     parser.add_argument("--eval_size", type=int, default=500)
     parser.add_argument("--eval_fraction", type=float, default=0.2)
     parser.add_argument("--max_source_words", type=int, default=0)
+    # Appendix F.4: long documents are truncated head+tail (first and last
+    # portions in equal proportion) rather than keeping only the head.
+    parser.add_argument("--truncation_mode", choices=["head", "tail", "head_tail"], default="head_tail")
+    parser.add_argument("--head_tail_ratio", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -265,6 +267,9 @@ def main() -> None:
         "train_size": len(train_rows),
         "eval_size": len(eval_rows),
         "eval_fraction": args.eval_fraction,
+        "max_source_words": args.max_source_words,
+        "truncation_mode": args.truncation_mode,
+        "head_tail_ratio": args.head_tail_ratio,
         "output_dir": str(output_dir),
         "raw_dir": args.raw_dir or args.save_raw_dir,
     }

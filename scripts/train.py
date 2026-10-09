@@ -18,6 +18,7 @@ def preprocess_split(split, model):
 def main():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    transformers.set_seed(training_args.seed)
     model = FlowComp(model_args, training_args)
 
     if not data_args.train_file:
@@ -48,6 +49,8 @@ def main():
     data_collator = FlowCompDataCollator(
         source_pad_token_id=model.source_pad_token_id,
         target_pad_token_id=model.target_pad_token_id,
+        soft_token_id=model.soft_token_id,
+        model=model,
     )
     train_model(model, train_dataset, eval_dataset, training_args, data_collator)
 

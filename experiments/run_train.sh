@@ -16,12 +16,28 @@ cd "${ROOT_DIR}"
 : "${FLOWCOMP_DECODER_LAYERS:=2}"
 : "${FLOWCOMP_ATTN_HEADS:=8}"
 : "${FLOWCOMP_MODEL_MAX_LENGTH:=1024}"
+# Appendix F.4: long documents use head+tail truncation.  The ICL (F.2) and
+# RAG (F.3) scenarios keep the leading context only, so "head" is the default
+# and long-document runs set FLOWCOMP_SOURCE_TRUNCATION=head_tail.
+: "${FLOWCOMP_SOURCE_TRUNCATION:=head}"
+: "${FLOWCOMP_SOURCE_HEAD_TAIL_RATIO:=0.5}"
 : "${FLOWCOMP_TRAIN_BATCH_SIZE:=1}"
 : "${FLOWCOMP_EVAL_BATCH_SIZE:=1}"
 : "${FLOWCOMP_GRAD_ACCUM_STEPS:=8}"
 : "${FLOWCOMP_LEARNING_RATE:=8e-5}"
 : "${FLOWCOMP_NUM_EPOCHS:=2}"
+: "${FLOWCOMP_CONSISTENCY_LOSS_WEIGHT:=0.01}"
 : "${FLOWCOMP_BF16:=true}"
+# Appendix E.1 / Table 8: cosine decay without warmup, weight decay 0.01,
+# AdamW betas (0.9, 0.999), seed 42, checkpoints every 500 steps keeping 2.
+: "${FLOWCOMP_LR_SCHEDULER:=cosine}"
+: "${FLOWCOMP_WEIGHT_DECAY:=0.01}"
+: "${FLOWCOMP_WARMUP_RATIO:=0.0}"
+: "${FLOWCOMP_ADAM_BETA1:=0.9}"
+: "${FLOWCOMP_ADAM_BETA2:=0.999}"
+: "${FLOWCOMP_SAVE_STEPS:=500}"
+: "${FLOWCOMP_SAVE_TOTAL_LIMIT:=2}"
+: "${FLOWCOMP_SEED:=42}"
 
 mkdir -p "${FLOWCOMP_OUTPUT_DIR}" logs
 export TOKENIZERS_PARALLELISM=false
@@ -39,11 +55,23 @@ python scripts/train.py \
   --decoder_layers "${FLOWCOMP_DECODER_LAYERS}" \
   --num_attention_heads "${FLOWCOMP_ATTN_HEADS}" \
   --model_max_length "${FLOWCOMP_MODEL_MAX_LENGTH}" \
+  --source_truncation "${FLOWCOMP_SOURCE_TRUNCATION}" \
+  --source_head_tail_ratio "${FLOWCOMP_SOURCE_HEAD_TAIL_RATIO}" \
   --per_device_train_batch_size "${FLOWCOMP_TRAIN_BATCH_SIZE}" \
   --per_device_eval_batch_size "${FLOWCOMP_EVAL_BATCH_SIZE}" \
   --gradient_accumulation_steps "${FLOWCOMP_GRAD_ACCUM_STEPS}" \
   --learning_rate "${FLOWCOMP_LEARNING_RATE}" \
   --num_train_epochs "${FLOWCOMP_NUM_EPOCHS}" \
+  --consistency_loss_weight "${FLOWCOMP_CONSISTENCY_LOSS_WEIGHT}" \
+  --lr_scheduler_type "${FLOWCOMP_LR_SCHEDULER}" \
+  --weight_decay "${FLOWCOMP_WEIGHT_DECAY}" \
+  --warmup_ratio "${FLOWCOMP_WARMUP_RATIO}" \
+  --adam_beta1 "${FLOWCOMP_ADAM_BETA1}" \
+  --adam_beta2 "${FLOWCOMP_ADAM_BETA2}" \
+  --save_strategy steps \
+  --save_steps "${FLOWCOMP_SAVE_STEPS}" \
+  --save_total_limit "${FLOWCOMP_SAVE_TOTAL_LIMIT}" \
+  --seed "${FLOWCOMP_SEED}" \
   --bf16 "${FLOWCOMP_BF16}" \
   --freeze_target_model true \
   --source_encoder_trainable false \

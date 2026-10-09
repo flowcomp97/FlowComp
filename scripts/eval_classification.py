@@ -88,11 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target_model_name_or_path", default="meta-llama/Meta-Llama-3-8B-Instruct")
     parser.add_argument("--target_model_device_map", default="none")
     parser.add_argument("--latent_generator_type", choices=["flow", "one_shot"], default="flow")
-    parser.add_argument("--distribution_loss_type", choices=["wasserstein", "mmd"], default="wasserstein")
+    parser.add_argument(
+        "--distribution_loss_type", choices=["wasserstein", "mmd", "cosine"], default="wasserstein"
+    )
     parser.add_argument("--soft_token_attention", choices=["bidirectional", "causal"], default="bidirectional")
-    parser.add_argument("--num_soft_tokens", type=int, default=32)
+    # Defaults follow the in-context learning column of Table 8.
+    parser.add_argument("--num_soft_tokens", type=int, default=64)
     parser.add_argument("--latent_dim", type=int, default=1024)
-    parser.add_argument("--sampling_steps", type=int, default=4)
+    parser.add_argument("--sampling_steps", type=int, default=8)
     parser.add_argument("--denoiser_layers", type=int, default=4)
     parser.add_argument("--decoder_layers", type=int, default=2)
     parser.add_argument("--num_attention_heads", type=int, default=8)
@@ -103,8 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--answer_key", default="answer")
     parser.add_argument("--labels_key", default="labels")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for FlowComp inference noise.")
-    parser.add_argument("--bf16", action="store_true")
-    parser.add_argument("--use_flash_attention_2", action="store_true")
+    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--use_flash_attention_2", action=argparse.BooleanOptionalAction, default=True
+    )
     return parser
 
 
